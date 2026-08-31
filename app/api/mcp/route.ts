@@ -3,6 +3,7 @@ import { parseApacheLogs } from "@/lib/parseApacheLogs";
 import { parseVercelLogs } from "@/lib/parseVercelLogs";
 import { analyze } from "@/lib/analyze";
 import { detectBot } from "@/lib/botDetection";
+import { isValidAccessToken } from "@/lib/oauth";
 import type { LogEntry } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -27,12 +28,9 @@ function rpcError(id: unknown, code: number, message: string) {
   return json({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.MCP_SECRET;
-  if (!secret) return true;
+function getToken(req: NextRequest): string | null {
   const auth = req.headers.get("authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  return token === secret;
+  return auth.startsWith("Bearer ") ? auth.slice(7) : null;
 }
 
 function autoDetectFormat(content: string): "apache" | "vercel" {
@@ -252,10 +250,19 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  const token = getToken(req);
+  if (!token || !isValidAccessToken(token)) {
+    const base = `https://${req.headers.get("host") ?? ""}`;
     return new Response(
       JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }),
-      { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      {
+        status: 401,
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json",
+          "WWW-Authenticate": `Bearer realm="mcp", resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+        },
+      }
     );
   }
 

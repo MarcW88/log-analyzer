@@ -26,6 +26,7 @@ import {
   List,
 } from "lucide-react";
 import clsx from "clsx";
+import { detectBot } from "@/lib/botDetection";
 
 interface AnalysisData {
   period: { start: string; end: string };
@@ -144,33 +145,84 @@ const NAV_ITEMS = [
   { id: "entries",   label: "Log Entries",      icon: List },
 ];
 
+function pathLevel(path: string): number {
+  const clean = path.split("?")[0];
+  const parts = clean.split("/").filter(Boolean);
+  return parts.length;
+}
+
 export default function Dashboard({ data, onReset }: DashboardProps) {
-  const [codeFilter, setCodeFilter] = useState<number | null>(null);
+  // Overview
+  const [hostFilter, setHostFilter] = useState("all");
+
+  // Bot Activity
+  const [botCategoryFilter, setBotCategoryFilter] = useState("all");
+
+  // URL Categories
+  const [urlLevelFilter, setUrlLevelFilter] = useState("all");
   const [urlSearch, setUrlSearch] = useState("");
+
+  // Crawled Pages
+  const [pagesBotFilter, setPagesBotFilter] = useState("all");
+
+  // Log Entries
+  const [codeFilter, setCodeFilter] = useState<number | null>(null);
+  const [entryTrafficFilter, setEntryTrafficFilter] = useState("all");
+  const [entryBotCategoryFilter, setEntryBotCategoryFilter] = useState("all");
   const [entrySearch, setEntrySearch] = useState("");
 
   const sortedCodes = Object.entries(data.httpCodes)
     .map(([k, v]) => ({ code: parseInt(k), count: v }))
     .sort((a, b) => b.count - a.count);
 
+  const filteredBots = useMemo(() =>
+    botCategoryFilter === "all"
+      ? data.bots
+      : data.bots.filter((b) => b.category === botCategoryFilter),
+    [data.bots, botCategoryFilter]
+  );
+
+  const filteredUrls = useMemo(() => {
+    let list = data.urlCategories;
+    if (urlSearch) list = list.filter((u) => u.path.toLowerCase().includes(urlSearch.toLowerCase()));
+    if (urlLevelFilter !== "all") {
+      const lvl = parseInt(urlLevelFilter);
+      list = list.filter((u) => {
+        const depth = pathLevel(u.path);
+        return lvl === 3 ? depth >= 3 : depth === lvl;
+      });
+    }
+    return list;
+  }, [data.urlCategories, urlSearch, urlLevelFilter]);
+
+  const filteredPages = useMemo(() => {
+    if (pagesBotFilter === "all") return data.crawledPages;
+    if (pagesBotFilter === "100") return data.crawledPages.filter((p) => p.botPercent === 100);
+    if (pagesBotFilter === "50+") return data.crawledPages.filter((p) => p.botPercent > 50 && p.botPercent < 100);
+    if (pagesBotFilter === "<50") return data.crawledPages.filter((p) => p.botPercent <= 50);
+    return data.crawledPages;
+  }, [data.crawledPages, pagesBotFilter]);
+
   const filteredEntries = useMemo(() => {
     return data.entries.filter((e) => {
       if (codeFilter && e.statusCode !== codeFilter) return false;
       if (entrySearch && !e.path.toLowerCase().includes(entrySearch.toLowerCase())) return false;
+      if (hostFilter !== "all" && e.host !== hostFilter) return false;
+      const bot = detectBot(e.userAgent);
+      if (entryTrafficFilter === "bots" && !bot) return false;
+      if (entryTrafficFilter === "users" && bot) return false;
+      if (entryBotCategoryFilter !== "all") {
+        if (!bot || bot.category !== entryBotCategoryFilter) return false;
+      }
       return true;
     });
-  }, [data.entries, codeFilter, entrySearch]);
+  }, [data.entries, codeFilter, entrySearch, hostFilter, entryTrafficFilter, entryBotCategoryFilter]);
 
-  const filteredUrls = useMemo(() =>
-    urlSearch
-      ? data.urlCategories.filter((u) => u.path.toLowerCase().includes(urlSearch.toLowerCase()))
-      : data.urlCategories,
-    [data.urlCategories, urlSearch]
-  );
+  const botCategories = useMemo(() => [...new Set(data.bots.map((b) => b.category))].sort(), [data.bots]);
 
-  const botPagination    = usePagination(data.bots, 20);
-  const urlPagination    = usePagination(filteredUrls, 15);
-  const pagesPagination  = usePagination(data.crawledPages, 20);
+  const botPagination     = usePagination(filteredBots, 20);
+  const urlPagination     = usePagination(filteredUrls, 15);
+  const pagesPagination   = usePagination(filteredPages, 20);
   const entriesPagination = usePagination(filteredEntries, 20);
 
   const CAT_COLORS: Record<string, string> = {
@@ -246,6 +298,21 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
             <StatCard icon={<Globe    size={18} className="text-green-500"  />} label="Hosts / sources" value={data.hosts.length ? data.hosts.length.toString() : "—"} />
           </div>
 
+          {/* Host filter */}
+          {data.hosts.length > 1 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Host</span>
+              <Dropdown
+                value={hostFilter}
+                onChange={setHostFilter}
+                options={[
+                  { value: "all", label: "All hosts" },
+                  ...data.hosts.map((h) => ({ value: h, label: h })),
+                ]}
+              />
+            </div>
+          )}
+
           {/* HTTP codes */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3">HTTP codes</p>
@@ -299,11 +366,21 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
 
         {/* ═══════════════════════════════════ BOT ACTIVITY ═══════ */}
         <section id="bots" className="scroll-mt-28">
-          <SectionTitle icon={<Bot size={16} />} title="Bot Activity" badge={`${data.bots.length} bots`} />
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mt-4">
+          <div className="flex items-center justify-between mb-4">
+            <SectionTitle icon={<Bot size={16} />} title="Bot Activity" badge={`${filteredBots.length} / ${data.bots.length} bots`} />
+            <Dropdown
+              value={botCategoryFilter}
+              onChange={setBotCategoryFilter}
+              options={[
+                { value: "all", label: "All categories" },
+                ...botCategories.map((c) => ({ value: c, label: c })),
+              ]}
+            />
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <BotTable bots={botPagination.slice} total={data.totalRequests} />
             <Pagination
-              page={botPagination.page} total={botPagination.total} count={data.bots.length}
+              page={botPagination.page} total={botPagination.total} count={filteredBots.length}
               onPrev={() => botPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => botPagination.setPage((p) => Math.min(botPagination.total, p + 1))}
             />
@@ -313,14 +390,27 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
         {/* ═══════════════════════════════════ URL CATEGORIES ═════ */}
         <section id="urls" className="scroll-mt-28">
           <div className="flex items-center justify-between mb-4">
-            <SectionTitle icon={<FolderSearch size={16} />} title="URL Categories" badge={`${data.urlCategories.length} paths`} />
-            <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text" placeholder="Filter paths…" value={urlSearch}
-                onChange={(e) => setUrlSearch(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-52"
+            <SectionTitle icon={<FolderSearch size={16} />} title="URL Categories" badge={`${filteredUrls.length} paths`} />
+            <div className="flex items-center gap-2">
+              <Dropdown
+                value={urlLevelFilter}
+                onChange={setUrlLevelFilter}
+                options={[
+                  { value: "all", label: "All levels" },
+                  { value: "0", label: "Root (/)" },
+                  { value: "1", label: "Level 1" },
+                  { value: "2", label: "Level 2" },
+                  { value: "3", label: "Level 3+" },
+                ]}
               />
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text" placeholder="Filter paths…" value={urlSearch}
+                  onChange={(e) => setUrlSearch(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-48"
+                />
+              </div>
             </div>
           </div>
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
@@ -354,8 +444,20 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
 
         {/* ═══════════════════════════════════ CRAWLED PAGES ══════ */}
         <section id="pages" className="scroll-mt-28">
-          <SectionTitle icon={<FileText size={16} />} title="Crawled Pages" badge={`${data.crawledPages.length} pages`} />
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mt-4">
+          <div className="flex items-center justify-between mb-4">
+            <SectionTitle icon={<FileText size={16} />} title="Crawled Pages" badge={`${filteredPages.length} pages`} />
+            <Dropdown
+              value={pagesBotFilter}
+              onChange={setPagesBotFilter}
+              options={[
+                { value: "all",  label: "All pages" },
+                { value: "100",  label: "100% bots" },
+                { value: "50+",  label: ">50% bots" },
+                { value: "<50",  label: "<50% bots" },
+              ]}
+            />
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
@@ -388,7 +490,7 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
               </tbody>
             </table>
             <Pagination
-              page={pagesPagination.page} total={pagesPagination.total} count={data.crawledPages.length}
+              page={pagesPagination.page} total={pagesPagination.total} count={filteredPages.length}
               onPrev={() => pagesPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => pagesPagination.setPage((p) => Math.min(pagesPagination.total, p + 1))}
             />
@@ -400,12 +502,31 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <SectionTitle icon={<List size={16} />} title="Log Entries" badge={`${filteredEntries.length} entries`} />
             <div className="flex items-center gap-2 flex-wrap">
+              <Dropdown
+                value={entryTrafficFilter}
+                onChange={(v) => { setEntryTrafficFilter(v); if (v === "users") setEntryBotCategoryFilter("all"); }}
+                options={[
+                  { value: "all",   label: "All traffic" },
+                  { value: "bots",  label: "Bots only" },
+                  { value: "users", label: "Users only" },
+                ]}
+              />
+              {entryTrafficFilter !== "users" && (
+                <Dropdown
+                  value={entryBotCategoryFilter}
+                  onChange={setEntryBotCategoryFilter}
+                  options={[
+                    { value: "all", label: "All categories" },
+                    ...botCategories.map((c) => ({ value: c, label: c })),
+                  ]}
+                />
+              )}
               <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type="text" placeholder="Filter by path…" value={entrySearch}
                   onChange={(e) => setEntrySearch(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-48"
+                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-44"
                 />
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -471,6 +592,26 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
 }
 
 // ── Sub-components ────────────────────────────────────────────────
+
+function Dropdown({
+  value, onChange, options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:border-blue-400 cursor-pointer hover:border-gray-300 transition-colors"
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
 
 function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
   return (
