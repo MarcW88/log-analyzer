@@ -20,6 +20,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  BarChart2,
+  FileText,
+  FolderSearch,
+  List,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -76,7 +80,6 @@ interface AnalysisData {
 
 interface DashboardProps {
   data: AnalysisData;
-  section: string;
   onReset: () => void;
 }
 
@@ -133,13 +136,18 @@ function usePagination<T>(items: T[], rowsPerPage: number) {
   return { slice, page, total, setPage };
 }
 
-export default function Dashboard({ data, section, onReset }: DashboardProps) {
-  const [botFilter, setBotFilter] = useState<string | null>(null);
-  const [codeFilter, setCodeFilter] = useState<number | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+const NAV_ITEMS = [
+  { id: "overview",  label: "Overview",        icon: BarChart2 },
+  { id: "bots",      label: "Bot Activity",     icon: Bot },
+  { id: "urls",      label: "URL Categories",   icon: FolderSearch },
+  { id: "pages",     label: "Crawled Pages",    icon: FileText },
+  { id: "entries",   label: "Log Entries",      icon: List },
+];
 
-  const start = new Date(data.period.start);
-  const end = new Date(data.period.end);
+export default function Dashboard({ data, onReset }: DashboardProps) {
+  const [codeFilter, setCodeFilter] = useState<number | null>(null);
+  const [urlSearch, setUrlSearch] = useState("");
+  const [entrySearch, setEntrySearch] = useState("");
 
   const sortedCodes = Object.entries(data.httpCodes)
     .map(([k, v]) => ({ code: parseInt(k), count: v }))
@@ -148,22 +156,24 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
   const filteredEntries = useMemo(() => {
     return data.entries.filter((e) => {
       if (codeFilter && e.statusCode !== codeFilter) return false;
-      if (searchQuery && !e.path.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (entrySearch && !e.path.toLowerCase().includes(entrySearch.toLowerCase())) return false;
       return true;
     });
-  }, [data.entries, codeFilter, searchQuery]);
+  }, [data.entries, codeFilter, entrySearch]);
 
-  const botPagination = usePagination(data.bots, 20);
-  const urlPagination = usePagination(
-    searchQuery
-      ? data.urlCategories.filter((u) => u.path.toLowerCase().includes(searchQuery))
+  const filteredUrls = useMemo(() =>
+    urlSearch
+      ? data.urlCategories.filter((u) => u.path.toLowerCase().includes(urlSearch.toLowerCase()))
       : data.urlCategories,
-    15
+    [data.urlCategories, urlSearch]
   );
-  const pagesPagination = usePagination(data.crawledPages, 20);
+
+  const botPagination    = usePagination(data.bots, 20);
+  const urlPagination    = usePagination(filteredUrls, 15);
+  const pagesPagination  = usePagination(data.crawledPages, 20);
   const entriesPagination = usePagination(filteredEntries, 20);
 
-  const categoryColors: Record<string, string> = {
+  const CAT_COLORS: Record<string, string> = {
     "Search engines": "#3b82f6",
     "AI bots": "#8b5cf6",
     "Social": "#ec4899",
@@ -171,142 +181,156 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
     "Users": "#10b981",
   };
 
+  function scrollTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <div className="ml-56 min-h-screen bg-gray-50">
-      {/* Top header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">
-            {section === "global" && "Global View"}
-            {section === "bots" && "Bot Activity"}
-            {section === "urls" && "URL Categories"}
-            {section === "pages" && "Crawled Pages"}
-            {section === "entries" && "Log Entries"}
-          </h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {fmtDate(data.period.start)} → {fmtDate(data.period.end)} ·{" "}
-            {data.hosts.length > 0 ? data.hosts.join(", ") : "Multiple sources"}
-          </p>
+    <div className="min-h-screen bg-gray-50">
+
+      {/* ── Sticky top navbar ── */}
+      <header className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
+        {/* Row 1: title + meta + reset */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <span className="text-base font-bold text-gray-900 tracking-tight">Log Analyzer</span>
+            <span className="text-gray-300">|</span>
+            <span className="text-sm text-gray-500">
+              {fmtDate(data.period.start)} → {fmtDate(data.period.end)}
+            </span>
+            {data.hosts.length > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-sm text-gray-500 max-w-xs truncate">
+                  {data.hosts.join(", ")}
+                </span>
+              </>
+            )}
+          </div>
+          <button
+            onClick={onReset}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <RefreshCw size={13} />
+            New import
+          </button>
         </div>
-        <button
-          onClick={onReset}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
-        >
-          <RefreshCw size={14} />
-          New import
-        </button>
+
+        {/* Row 2: section anchor links */}
+        <nav className="flex items-center gap-1 px-6 py-0">
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => scrollTo(id)}
+              className="flex items-center gap-1.5 px-3 py-2.5 text-sm text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors font-medium"
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </nav>
       </header>
 
-      <main className="p-6 space-y-6">
+      {/* ── Page content ── */}
+      <main className="max-w-7xl mx-auto px-6 py-8 space-y-10">
 
-        {/* === GLOBAL VIEW === */}
-        {section === "global" && (
-          <>
-            {/* Stats row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard icon={<Activity size={18} className="text-blue-500" />} label="Requests" value={data.totalRequests.toLocaleString()} />
-              <StatCard icon={<Link2 size={18} className="text-purple-500" />} label="Unique URLs" value={data.uniqueUrls.toLocaleString()} />
-              <StatCard icon={<Bot size={18} className="text-orange-500" />} label="Detected bots" value={data.detectedBots.toLocaleString()} />
-              <StatCard icon={<Globe size={18} className="text-green-500" />} label="Sources" value={data.hosts.length.toString()} />
-            </div>
+        {/* ═══════════════════════════════════ OVERVIEW ═══════════ */}
+        <section id="overview" className="scroll-mt-28 space-y-5">
+          <SectionTitle icon={<BarChart2 size={16} />} title="Overview" />
 
-            {/* HTTP Codes */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-4">HTTP codes</h3>
-              <div className="flex flex-wrap gap-3">
-                {sortedCodes.map(({ code, count }) => (
-                  <button
-                    key={code}
-                    onClick={() => setCodeFilter(codeFilter === code ? null : code)}
-                    className={clsx(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all",
-                      codeFilter === code
-                        ? "ring-2 ring-blue-500 border-blue-300"
-                        : "border-gray-200 hover:border-gray-300",
-                      statusColor(code)
-                    )}
-                  >
-                    <span className="font-bold">{code}</span>
-                    <span className="opacity-70">{count}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+          {/* Stat cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard icon={<Activity size={18} className="text-blue-500" />}  label="Total requests"  value={data.totalRequests.toLocaleString()} />
+            <StatCard icon={<Link2    size={18} className="text-purple-500" />} label="Unique URLs"     value={data.uniqueUrls.toLocaleString()} />
+            <StatCard icon={<Bot      size={18} className="text-orange-500" />} label="Detected bots"  value={data.detectedBots.toLocaleString()} />
+            <StatCard icon={<Globe    size={18} className="text-green-500"  />} label="Hosts / sources" value={data.hosts.length ? data.hosts.length.toString() : "—"} />
+          </div>
 
-            {/* Timeline chart */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-4">Crawl timeline</h3>
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={data.timelineData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-                  <defs>
-                    {["searchEngines", "aiBots", "others", "users"].map((key) => (
-                      <linearGradient key={key} id={`g-${key}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={categoryColors[key === "searchEngines" ? "Search engines" : key === "aiBots" ? "AI bots" : key === "users" ? "Users" : "Others"]} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={categoryColors[key === "searchEngines" ? "Search engines" : key === "aiBots" ? "AI bots" : key === "users" ? "Users" : "Others"]} stopOpacity={0} />
-                      </linearGradient>
-                    ))}
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Legend formatter={(v) => v === "searchEngines" ? "Search engines" : v === "aiBots" ? "AI bots" : v} />
-                  <Area type="monotone" dataKey="users" stackId="1" stroke="#10b981" fill="url(#g-users)" name="Users" />
-                  <Area type="monotone" dataKey="searchEngines" stackId="1" stroke="#3b82f6" fill="url(#g-searchEngines)" name="searchEngines" />
-                  <Area type="monotone" dataKey="aiBots" stackId="1" stroke="#8b5cf6" fill="url(#g-aiBots)" name="aiBots" />
-                  <Area type="monotone" dataKey="others" stackId="1" stroke="#6b7280" fill="url(#g-others)" name="Others" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Bot summary top 5 */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-4">Top bots</h3>
-              <BotTable bots={data.bots.slice(0, 5)} total={data.totalRequests} compact />
-            </div>
-          </>
-        )}
-
-        {/* === BOT ACTIVITY === */}
-        {section === "bots" && (
+          {/* HTTP codes */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">
-              Bot activity · {data.bots.length} bots detected
-            </h3>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3">HTTP codes</p>
+            <div className="flex flex-wrap gap-2">
+              {sortedCodes.map(({ code, count }) => (
+                <button
+                  key={code}
+                  onClick={() => setCodeFilter(codeFilter === code ? null : code)}
+                  className={clsx(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all",
+                    codeFilter === code ? "ring-2 ring-blue-500 border-blue-300" : "border-gray-200 hover:border-gray-300",
+                    statusColor(code)
+                  )}
+                >
+                  <span className="font-bold">{code}</span>
+                  <span className="opacity-60">{count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Timeline */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-4">Crawl timeline</p>
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={data.timelineData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                <defs>
+                  {(["users","searchEngines","aiBots","others"] as const).map((k) => {
+                    const colorKey = k === "searchEngines" ? "Search engines" : k === "aiBots" ? "AI bots" : k === "users" ? "Users" : "Others";
+                    return (
+                      <linearGradient key={k} id={`g-${k}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor={CAT_COLORS[colorKey]} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={CAT_COLORS[colorKey]} stopOpacity={0} />
+                      </linearGradient>
+                    );
+                  })}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend formatter={(v) => v === "searchEngines" ? "Search engines" : v === "aiBots" ? "AI bots" : v} />
+                <Area type="monotone" dataKey="users"         stackId="1" stroke={CAT_COLORS["Users"]}          fill="url(#g-users)"         name="Users" />
+                <Area type="monotone" dataKey="searchEngines" stackId="1" stroke={CAT_COLORS["Search engines"]} fill="url(#g-searchEngines)" name="searchEngines" />
+                <Area type="monotone" dataKey="aiBots"        stackId="1" stroke={CAT_COLORS["AI bots"]}        fill="url(#g-aiBots)"        name="aiBots" />
+                <Area type="monotone" dataKey="others"        stackId="1" stroke={CAT_COLORS["Others"]}         fill="url(#g-others)"        name="Others" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════ BOT ACTIVITY ═══════ */}
+        <section id="bots" className="scroll-mt-28">
+          <SectionTitle icon={<Bot size={16} />} title="Bot Activity" badge={`${data.bots.length} bots`} />
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mt-4">
             <BotTable bots={botPagination.slice} total={data.totalRequests} />
             <Pagination
-              page={botPagination.page}
-              total={botPagination.total}
+              page={botPagination.page} total={botPagination.total} count={data.bots.length}
               onPrev={() => botPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => botPagination.setPage((p) => Math.min(botPagination.total, p + 1))}
-              count={data.bots.length}
             />
           </div>
-        )}
+        </section>
 
-        {/* === URL CATEGORIES === */}
-        {section === "urls" && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center gap-3 mb-4">
-              <h3 className="text-sm font-semibold text-gray-700">URL categories</h3>
-              <div className="relative ml-auto">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Filter paths…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                />
-              </div>
+        {/* ═══════════════════════════════════ URL CATEGORIES ═════ */}
+        <section id="urls" className="scroll-mt-28">
+          <div className="flex items-center justify-between mb-4">
+            <SectionTitle icon={<FolderSearch size={16} />} title="URL Categories" badge={`${data.urlCategories.length} paths`} />
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text" placeholder="Filter paths…" value={urlSearch}
+                onChange={(e) => setUrlSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-52"
+              />
             </div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
                   <th className="pb-2 pr-4">Path</th>
                   <th className="pb-2 pr-4 text-right">Requests</th>
                   <th className="pb-2 pr-4 text-right">URLs</th>
-                  <th className="pb-2 text-right">Req/day</th>
+                  <th className="pb-2 text-right">Req / day</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,21 +345,17 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
               </tbody>
             </table>
             <Pagination
-              page={urlPagination.page}
-              total={urlPagination.total}
+              page={urlPagination.page} total={urlPagination.total} count={filteredUrls.length}
               onPrev={() => urlPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => urlPagination.setPage((p) => Math.min(urlPagination.total, p + 1))}
-              count={data.urlCategories.length}
             />
           </div>
-        )}
+        </section>
 
-        {/* === CRAWLED PAGES === */}
-        {section === "pages" && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">
-              Crawled pages · {data.crawledPages.length} pages
-            </h3>
+        {/* ═══════════════════════════════════ CRAWLED PAGES ══════ */}
+        <section id="pages" className="scroll-mt-28">
+          <SectionTitle icon={<FileText size={16} />} title="Crawled Pages" badge={`${data.crawledPages.length} pages`} />
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mt-4">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
@@ -349,51 +369,46 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
               <tbody>
                 {pagesPagination.slice.map((p) => (
                   <tr key={p.path} className="border-b border-gray-50 table-row-hover">
-                    <td className="py-2 pr-4 font-mono text-xs text-gray-800 max-w-xs truncate" title={p.path}>{p.path}</td>
+                    <td className="py-2 pr-4 font-mono text-xs text-gray-800 max-w-sm truncate" title={p.path}>{p.path}</td>
                     <td className="py-2 pr-4 text-right font-medium">{p.requests}</td>
                     <td className="py-2 pr-4 text-right">
                       <span className={clsx(
                         "inline-block px-2 py-0.5 rounded-full text-xs font-medium",
                         p.botPercent === 100 ? "bg-orange-100 text-orange-700" :
-                        p.botPercent > 50 ? "bg-amber-100 text-amber-700" :
-                        "bg-green-100 text-green-700"
+                        p.botPercent > 50    ? "bg-amber-100 text-amber-700" :
+                                               "bg-green-100 text-green-700"
                       )}>
                         {p.botPercent}%
                       </span>
                     </td>
                     <td className="py-2 pr-4 text-right text-gray-500">{p.bots}</td>
-                    <td className="py-2 text-right text-gray-500 text-xs">{fmtDate(p.lastSeen)}</td>
+                    <td className="py-2 text-right text-gray-400 text-xs">{fmtDate(p.lastSeen)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <Pagination
-              page={pagesPagination.page}
-              total={pagesPagination.total}
+              page={pagesPagination.page} total={pagesPagination.total} count={data.crawledPages.length}
               onPrev={() => pagesPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => pagesPagination.setPage((p) => Math.min(pagesPagination.total, p + 1))}
-              count={data.crawledPages.length}
             />
           </div>
-        )}
+        </section>
 
-        {/* === LOG ENTRIES === */}
-        {section === "entries" && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <h3 className="text-sm font-semibold text-gray-700">Log entries</h3>
-              <div className="relative ml-2">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        {/* ═══════════════════════════════════ LOG ENTRIES ════════ */}
+        <section id="entries" className="scroll-mt-28">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <SectionTitle icon={<List size={16} />} title="Log Entries" badge={`${filteredEntries.length} entries`} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
-                  type="text"
-                  placeholder="Filter by path…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                  type="text" placeholder="Filter by path…" value={entrySearch}
+                  onChange={(e) => setEntrySearch(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 w-48"
                 />
               </div>
-              <div className="flex flex-wrap gap-2 ml-auto">
+              <div className="flex flex-wrap gap-1.5">
                 {sortedCodes.map(({ code }) => (
                   <button
                     key={code}
@@ -409,7 +424,8 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
                 ))}
               </div>
             </div>
-
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[700px]">
                 <thead>
@@ -424,9 +440,9 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
                 <tbody>
                   {entriesPagination.slice.map((e, i) => (
                     <tr key={i} className="border-b border-gray-50 table-row-hover">
-                      <td className="py-1.5 pr-3 text-gray-500 text-xs whitespace-nowrap">{fmt(e.timestamp)}</td>
+                      <td className="py-1.5 pr-3 text-gray-400 text-xs whitespace-nowrap">{fmt(e.timestamp)}</td>
                       <td className="py-1.5 pr-3 font-mono text-xs text-gray-800 max-w-xs truncate" title={e.path}>{e.path}</td>
-                      <td className="py-1.5 pr-3 text-gray-500 text-xs max-w-[200px] truncate" title={e.userAgent}>{e.userAgent || "-"}</td>
+                      <td className="py-1.5 pr-3 text-gray-500 text-xs max-w-[200px] truncate" title={e.userAgent}>{e.userAgent || "—"}</td>
                       <td className="py-1.5 pr-3 text-center">
                         <span className={clsx("inline-block px-2 py-0.5 rounded text-xs font-bold", statusColor(e.statusCode))}>
                           {e.statusCode}
@@ -441,20 +457,34 @@ export default function Dashboard({ data, section, onReset }: DashboardProps) {
               </table>
             </div>
             <Pagination
-              page={entriesPagination.page}
-              total={entriesPagination.total}
+              page={entriesPagination.page} total={entriesPagination.total} count={filteredEntries.length}
               onPrev={() => entriesPagination.setPage((p) => Math.max(1, p - 1))}
               onNext={() => entriesPagination.setPage((p) => Math.min(entriesPagination.total, p + 1))}
-              count={filteredEntries.length}
             />
           </div>
-        )}
+        </section>
+
+        <div className="h-12" />
       </main>
     </div>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────
+
+function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-gray-400">{icon}</span>
+      <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+      {badge && (
+        <span className="ml-1 text-xs font-medium bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function StatCard({
   icon,
