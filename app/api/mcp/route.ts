@@ -4,6 +4,7 @@ import { parseVercelLogs } from "@/lib/parseVercelLogs";
 import { analyze } from "@/lib/analyze";
 import { detectBot } from "@/lib/botDetection";
 import { isValidAccessToken } from "@/lib/oauth";
+import { loadAnalysis } from "@/lib/cache";
 import type { LogEntry } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -114,9 +115,144 @@ const TOOLS = [
       required: ["content"],
     },
   },
+  {
+    name: "get_last_analysis",
+    description:
+      "Return the full analysis report from the last log file imported via the Log Analyzer UI. No parameters needed — reads the server-side cache. Use this instead of analyze_logs when the user has already uploaded logs.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_top_bots",
+    description:
+      "List the top bots from the last imported log analysis (cached). Optional: filter by category (search_engine, ai_bot, seo_tool…) and set how many to return.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "Filter by bot category (e.g. ai_bot, search_engine, seo_tool)." },
+        limit: { type: "number", description: "Max bots to return. Default: 15." },
+      },
+    },
+  },
+  {
+    name: "get_top_pages",
+    description:
+      "List the most crawled pages from the last imported log analysis (cached). Optional: filter pages whose path contains a substring and set min bot percentage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path_contains: { type: "string", description: "Only return pages whose path contains this string." },
+        min_bot_percent: { type: "number", description: "Only return pages with at least this bot percentage (0-100)." },
+        limit: { type: "number", description: "Max pages to return. Default: 20." },
+      },
+    },
+  },
 ];
 
 // ── Tool handlers ──────────────────────────────────────────────────
+
+function handleGetLastAnalysis(): string {
+  const c = loadAnalysis();
+  if (!c) {
+    return [
+      "❌ **No cached analysis found.**",
+      "",
+      "Upload a log file via the Log Analyzer UI first, then call this tool again.",
+      "Alternatively, use `analyze_logs` and pass the raw log content directly.",
+    ].join("\n");
+  }
+
+  const saved = new Date(c.savedAt).toLocaleString("fr-FR");
+  const period = `${new Date(c.period.start).toLocaleString("fr-FR")} → ${new Date(c.period.end).toLocaleString("fr-FR")}`;
+
+  const codeLines = Object.entries(c.httpCodes)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 8)
+    .map(([code, count]) => `  - HTTP ${code}: ${(count as number).toLocaleString()}`)
+    .join("\n");
+
+  const topBots = c.bots.slice(0, 8)
+    .map((b) => `  - **${b.name}** (${b.category}) — ${b.requests.toLocaleString()} req, ${b.uniqueUrls} unique URLs`)
+    .join("\n");
+
+  const topUrls = c.urlCategories.slice(0, 8)
+    .map((u) => `  - \`${u.path}\` — ${u.requests.toLocaleString()} req (${u.uniqueUrls} unique, ${u.reqPerDay}/day)`)
+    .join("\n");
+
+  const topPages = c.crawledPages.slice(0, 8)
+    .map((p) => `  - \`${p.path}\` — ${p.requests} req, **${p.botPercent}%** bots`)
+    .join("\n");
+
+  return [
+    `## Log Analysis Report _(cached ${saved})_`,
+    ``,
+    `**Period:** ${period}`,
+    `**Hosts:** ${c.hosts.length ? c.hosts.join(", ") : "—"}`,
+    ``,
+    `### Overview`,
+    `- **Total requests:** ${c.totalRequests.toLocaleString()}`,
+    `- **Unique URLs:** ${c.uniqueUrls.toLocaleString()}`,
+    `- **Distinct bots:** ${c.detectedBots}`,
+    `- **Bot traffic:** ${c.botPercent}%`,
+    ``,
+    `### HTTP Status Codes`,
+    codeLines || "  — none",
+    ``,
+    `### Top Bots`,
+    topBots || "  — no bots detected",
+    ``,
+    `### URL Categories (top segments)`,
+    topUrls || "  — none",
+    ``,
+    `### Most Crawled Pages`,
+    topPages || "  — none",
+  ].join("\n");
+}
+
+function handleGetTopBots(args: Record<string, unknown>): string {
+  const c = loadAnalysis();
+  if (!c) return "❌ No cached analysis found. Upload logs via the UI first.";
+
+  const category = typeof args.category === "string" ? args.category.toLowerCase() : null;
+  const limit = Math.min(typeof args.limit === "number" ? args.limit : 15, 50);
+
+  let bots = c.bots;
+  if (category) bots = bots.filter((b) => b.category.toLowerCase().includes(category));
+  bots = bots.slice(0, limit);
+
+  if (!bots.length) return `No bots found${category ? ` matching category "${category}"` : ""}.`;
+
+  const header = `**${bots.length} bot(s)**${category ? ` — category: ${category}` : ""}:\n`;
+  const rows = bots.map((b, i) =>
+    `${i + 1}. **${b.name}** (${b.provider} · ${b.category})` +
+    `\n   ${b.requests.toLocaleString()} req · ${b.uniqueUrls} unique URLs` +
+    `\n   First: ${new Date(b.firstSeen).toLocaleDateString("fr-FR")} · Last: ${new Date(b.lastSeen).toLocaleDateString("fr-FR")}`
+  );
+  return header + rows.join("\n");
+}
+
+function handleGetTopPages(args: Record<string, unknown>): string {
+  const c = loadAnalysis();
+  if (!c) return "❌ No cached analysis found. Upload logs via the UI first.";
+
+  const pathFilter = typeof args.path_contains === "string" ? args.path_contains.toLowerCase() : null;
+  const minBot = typeof args.min_bot_percent === "number" ? args.min_bot_percent : 0;
+  const limit = Math.min(typeof args.limit === "number" ? args.limit : 20, 100);
+
+  let pages = c.crawledPages;
+  if (pathFilter) pages = pages.filter((p) => p.path.toLowerCase().includes(pathFilter));
+  if (minBot > 0) pages = pages.filter((p) => p.botPercent >= minBot);
+  pages = pages.slice(0, limit);
+
+  if (!pages.length) return "No pages match the given filters.";
+
+  const header = `**${pages.length} page(s)**:\n`;
+  const rows = pages.map((p, i) =>
+    `${i + 1}. \`${p.path}\`` +
+    `\n   ${p.requests} req total · **${p.botPercent}%** bots (${p.bots} bot req)` +
+    `\n   Last seen: ${new Date(p.lastSeen).toLocaleDateString("fr-FR")}`
+  );
+  return header + rows.join("\n");
+}
 
 function handleDetectBot(args: Record<string, unknown>): string {
   const ua = (args.user_agent as string)?.trim();
@@ -297,9 +433,12 @@ export async function POST(req: NextRequest) {
 
     try {
       let result = "";
-      if (name === "analyze_logs")    result = handleAnalyzeLogs(args);
-      else if (name === "detect_bot") result = handleDetectBot(args);
-      else if (name === "filter_entries") result = handleFilterEntries(args);
+      if (name === "analyze_logs")         result = handleAnalyzeLogs(args);
+      else if (name === "detect_bot")       result = handleDetectBot(args);
+      else if (name === "filter_entries")   result = handleFilterEntries(args);
+      else if (name === "get_last_analysis") result = handleGetLastAnalysis();
+      else if (name === "get_top_bots")     result = handleGetTopBots(args);
+      else if (name === "get_top_pages")    result = handleGetTopPages(args);
       else return rpc(id, { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true });
       return rpc(id, { content: [{ type: "text", text: result }] });
     } catch (err) {

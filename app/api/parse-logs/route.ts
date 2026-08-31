@@ -3,6 +3,8 @@ import pako from "pako";
 import { parseApacheLogs } from "@/lib/parseApacheLogs";
 import { parseVercelLogs } from "@/lib/parseVercelLogs";
 import { analyze } from "@/lib/analyze";
+import { detectBot } from "@/lib/botDetection";
+import { saveAnalysis } from "@/lib/cache";
 import { LogEntry } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -57,6 +59,41 @@ export async function POST(req: NextRequest) {
     }
 
     const result = analyze(allEntries);
+
+    const botCount = result.entries.filter((e) => detectBot(e.userAgent)).length;
+    const botPercent = result.totalRequests > 0
+      ? Math.round((botCount / result.totalRequests) * 100)
+      : 0;
+
+    saveAnalysis({
+      savedAt: new Date().toISOString(),
+      period: {
+        start: result.period.start.toISOString(),
+        end: result.period.end.toISOString(),
+      },
+      hosts: result.hosts,
+      totalRequests: result.totalRequests,
+      uniqueUrls: result.uniqueUrls,
+      detectedBots: result.detectedBots,
+      botPercent,
+      httpCodes: result.httpCodes,
+      bots: result.bots.map((b) => ({
+        name: b.name,
+        provider: b.provider,
+        category: b.category,
+        requests: b.requests,
+        uniqueUrls: b.uniqueUrls.size,
+        firstSeen: b.firstSeen.toISOString(),
+        lastSeen: b.lastSeen.toISOString(),
+        statusCodes: b.statusCodes,
+      })),
+      urlCategories: result.urlCategories,
+      crawledPages: result.crawledPages.map((p) => ({
+        ...p,
+        lastSeen: p.lastSeen.toISOString(),
+      })),
+      timelineData: result.timelineData,
+    });
 
     // Serialize the result (Sets → arrays, Dates → ISO strings)
     return NextResponse.json({
