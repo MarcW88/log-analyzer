@@ -2,6 +2,13 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
+function safeDate(val: string | undefined, opts?: Intl.DateTimeFormatOptions): string {
+  if (!val) return "—";
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("fr-FR", opts ?? {});
+}
+
 async function getData() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
   const { data } = await supabaseAdmin
@@ -26,9 +33,9 @@ export default async function ReportPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const d = row.data as any;
-  const saved = new Date(row.saved_at).toLocaleString("fr-FR");
-  const periodStart = new Date(d.period?.start).toLocaleString("fr-FR");
-  const periodEnd = new Date(d.period?.end).toLocaleString("fr-FR");
+  const saved = safeDate(row.saved_at);
+  const periodStart = safeDate(d.period?.start);
+  const periodEnd = safeDate(d.period?.end);
 
   const bots: Array<{name:string;provider:string;category:string;requests:number;uniqueUrls:number;firstSeen:string;lastSeen:string}> = d.bots ?? [];
   const pages: Array<{path:string;requests:number;botPercent:number;bots:number;lastSeen:string}> = d.crawledPages ?? [];
@@ -78,7 +85,7 @@ export default async function ReportPage() {
         <table>
           <thead><tr><th>Bot</th><th>Provider</th><th>Requêtes</th><th>URLs uniques</th><th>Première vue</th><th>Dernière vue</th></tr></thead>
           <tbody>{seo.map((b,i) => (
-            <tr key={i}><td>{b.name}</td><td>{b.provider}</td><td>{b.requests.toLocaleString("fr-FR")}</td><td>{b.uniqueUrls}</td><td>{new Date(b.firstSeen).toLocaleDateString("fr-FR")}</td><td>{new Date(b.lastSeen).toLocaleDateString("fr-FR")}</td></tr>
+            <tr key={i}><td>{b.name}</td><td>{b.provider}</td><td>{b.requests.toLocaleString("fr-FR")}</td><td>{b.uniqueUrls}</td><td>{safeDate(b.firstSeen, {dateStyle:"short"})}</td><td>{safeDate(b.lastSeen, {dateStyle:"short"})}</td></tr>
           ))}</tbody>
         </table>
 
@@ -86,7 +93,7 @@ export default async function ReportPage() {
         <table>
           <thead><tr><th>Bot</th><th>Provider</th><th>Requêtes</th><th>URLs uniques</th><th>Première vue</th><th>Dernière vue</th></tr></thead>
           <tbody>{ai.map((b,i) => (
-            <tr key={i}><td>{b.name}</td><td>{b.provider}</td><td>{b.requests.toLocaleString("fr-FR")}</td><td>{b.uniqueUrls}</td><td>{new Date(b.firstSeen).toLocaleDateString("fr-FR")}</td><td>{new Date(b.lastSeen).toLocaleDateString("fr-FR")}</td></tr>
+            <tr key={i}><td>{b.name}</td><td>{b.provider}</td><td>{b.requests.toLocaleString("fr-FR")}</td><td>{b.uniqueUrls}</td><td>{safeDate(b.firstSeen, {dateStyle:"short"})}</td><td>{safeDate(b.lastSeen, {dateStyle:"short"})}</td></tr>
           ))}</tbody>
         </table>
 
@@ -118,7 +125,7 @@ export default async function ReportPage() {
         <table>
           <thead><tr><th>Page</th><th>Requêtes</th><th>% bots</th><th>Dernière vue</th></tr></thead>
           <tbody>{pages.slice(0,30).map((p,i) => (
-            <tr key={i}><td><code>{p.path}</code></td><td>{p.requests.toLocaleString("fr-FR")}</td><td><strong>{p.botPercent}%</strong></td><td>{new Date(p.lastSeen).toLocaleDateString("fr-FR")}</td></tr>
+            <tr key={i}><td><code>{p.path}</code></td><td>{p.requests.toLocaleString("fr-FR")}</td><td><strong>{p.botPercent}% (de cette URL)</strong></td><td>{safeDate(p.lastSeen, {dateStyle:"short"})}</td></tr>
           ))}</tbody>
         </table>
 

@@ -122,13 +122,27 @@ function fmt(dateStr: string) {
   });
 }
 
-function fmtDate(dateStr: string) {
+function fmtDate(dateStr: string | undefined) {
+  if (!dateStr) return "—";
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-US", {
     month: "2-digit",
     day: "2-digit",
     year: "numeric",
   });
+}
+
+function getFileType(path: string): string {
+  const p = path.split("?")[0].toLowerCase();
+  if (p.startsWith("/_next/static") || p.startsWith("/_next/")) return "Next.js";
+  if (/\.(js|mjs|jsx|ts|tsx)$/.test(p)) return "JS";
+  if (/\.css$/.test(p)) return "CSS";
+  if (/\.(png|jpg|jpeg|gif|ico|svg|webp|avif|woff2?|ttf|eot)$/.test(p)) return "Asset";
+  if (/\.json$/.test(p) || p.startsWith("/_next/data")) return "JSON";
+  if (p.startsWith("/api/") || p === "/api") return "API";
+  if (/\.(xml|txt|pdf|csv)$/.test(p)) return "Other";
+  return "Page";
 }
 
 function usePagination<T>(items: T[], rowsPerPage: number) {
@@ -162,9 +176,11 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
   // URL Categories
   const [urlLevelFilter, setUrlLevelFilter] = useState("all");
   const [urlSearch, setUrlSearch] = useState("");
+  const [urlTypeFilter, setUrlTypeFilter] = useState("all");
 
   // Crawled Pages
   const [pagesBotFilter, setPagesBotFilter] = useState("all");
+  const [pagesTypeFilter, setPagesTypeFilter] = useState("all");
 
   // Log Entries
   const [codeFilter, setCodeFilter] = useState<number | null>(null);
@@ -193,16 +209,20 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
         return lvl === 3 ? depth >= 3 : depth === lvl;
       });
     }
+    if (urlTypeFilter !== "all") {
+      list = list.filter((u) => getFileType(u.path) === urlTypeFilter);
+    }
     return list;
-  }, [data.urlCategories, urlSearch, urlLevelFilter]);
+  }, [data.urlCategories, urlSearch, urlLevelFilter, urlTypeFilter]);
 
   const filteredPages = useMemo(() => {
-    if (pagesBotFilter === "all") return data.crawledPages;
-    if (pagesBotFilter === "100") return data.crawledPages.filter((p) => p.botPercent === 100);
-    if (pagesBotFilter === "50+") return data.crawledPages.filter((p) => p.botPercent > 50 && p.botPercent < 100);
-    if (pagesBotFilter === "<50") return data.crawledPages.filter((p) => p.botPercent <= 50);
-    return data.crawledPages;
-  }, [data.crawledPages, pagesBotFilter]);
+    let list = data.crawledPages;
+    if (pagesBotFilter === "100") list = list.filter((p) => p.botPercent === 100);
+    else if (pagesBotFilter === "50+") list = list.filter((p) => p.botPercent > 50 && p.botPercent < 100);
+    else if (pagesBotFilter === "<50") list = list.filter((p) => p.botPercent <= 50);
+    if (pagesTypeFilter !== "all") list = list.filter((p) => getFileType(p.path) === pagesTypeFilter);
+    return list;
+  }, [data.crawledPages, pagesBotFilter, pagesTypeFilter]);
 
   const filteredEntries = useMemo(() => {
     return data.entries.filter((e) => {
@@ -405,6 +425,20 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
             <SectionTitle icon={<FolderSearch size={16} />} title="URL Categories" badge={`${filteredUrls.length} paths`} />
             <div className="flex items-center gap-2">
               <Dropdown
+                value={urlTypeFilter}
+                onChange={setUrlTypeFilter}
+                options={[
+                  { value: "all",     label: "All types" },
+                  { value: "Page",    label: "Pages HTML" },
+                  { value: "Next.js", label: "Next.js (_next)" },
+                  { value: "API",     label: "API" },
+                  { value: "JS",      label: "JavaScript" },
+                  { value: "CSS",     label: "CSS" },
+                  { value: "Asset",   label: "Images / fonts" },
+                  { value: "JSON",    label: "JSON / data" },
+                ]}
+              />
+              <Dropdown
                 value={urlLevelFilter}
                 onChange={setUrlLevelFilter}
                 options={[
@@ -458,16 +492,32 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
         <section id="pages" className="scroll-mt-28">
           <div className="flex items-center justify-between mb-4">
             <SectionTitle icon={<FileText size={16} />} title="Crawled Pages" badge={`${filteredPages.length} pages`} />
-            <Dropdown
-              value={pagesBotFilter}
-              onChange={setPagesBotFilter}
-              options={[
-                { value: "all",  label: "All pages" },
-                { value: "100",  label: "100% bots" },
-                { value: "50+",  label: ">50% bots" },
-                { value: "<50",  label: "<50% bots" },
-              ]}
-            />
+            <div className="flex items-center gap-2">
+              <Dropdown
+                value={pagesTypeFilter}
+                onChange={setPagesTypeFilter}
+                options={[
+                  { value: "all",     label: "All types" },
+                  { value: "Page",    label: "Pages HTML" },
+                  { value: "Next.js", label: "Next.js (_next)" },
+                  { value: "API",     label: "API" },
+                  { value: "JS",      label: "JavaScript" },
+                  { value: "CSS",     label: "CSS" },
+                  { value: "Asset",   label: "Images / fonts" },
+                  { value: "JSON",    label: "JSON / data" },
+                ]}
+              />
+              <Dropdown
+                value={pagesBotFilter}
+                onChange={setPagesBotFilter}
+                options={[
+                  { value: "all",  label: "All bot %" },
+                  { value: "100",  label: "100% bots" },
+                  { value: "50+",  label: ">50% bots" },
+                  { value: "<50",  label: "<50% bots" },
+                ]}
+              />
+            </div>
           </div>
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <table className="w-full text-sm">
@@ -475,8 +525,8 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
                   <th className="pb-2 pr-4">URL</th>
                   <th className="pb-2 pr-4 text-right">Req.</th>
-                  <th className="pb-2 pr-4 text-right">% bots</th>
-                  <th className="pb-2 pr-4 text-right">Bots</th>
+                  <th className="pb-2 pr-4 text-right" title="Bot requests / total requests for this URL">% bots/URL</th>
+                  <th className="pb-2 pr-4 text-right"># bots</th>
                   <th className="pb-2 text-right">Last seen</th>
                 </tr>
               </thead>
