@@ -3,13 +3,17 @@
 import { useRef, useState, useCallback } from "react";
 import { Upload, FolderOpen, FileArchive, X, Loader2, FolderInput } from "lucide-react";
 import clsx from "clsx";
-import { aggregateResults } from "@/lib/aggregateResults";
+import pako from "pako";
+import { parseApacheLogs } from "@/lib/parseApacheLogs";
+import { parseVercelLogs } from "@/lib/parseVercelLogs";
+import { analyze } from "@/lib/analyze";
+import { detectBot } from "@/lib/botDetection";
+import type { LogEntry } from "@/lib/types";
 
 interface FileUploaderProps {
   onAnalyzed: (data: unknown) => void;
 }
 
-const BATCH_SIZE = 3;
 const ALLOWED_EXT = [".gz", ".log", ".txt"];
 
 function isAllowed(name: string) {
@@ -101,7 +105,7 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
     }
   }, []);
 
-  // ── Upload in batches, aggregate client-side ──
+  // ── Parse all files locally, send only result JSON to API ──
   async function handleAnalyze() {
     if (!files.length) return;
     setLoading(true);
@@ -109,38 +113,84 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
     setProgress({ done: 0, total: files.length });
 
     try {
-      const batches: File[][] = [];
-      for (let i = 0; i < files.length; i += BATCH_SIZE) {
-        batches.push(files.slice(i, i + BATCH_SIZE));
+      const allEntries: LogEntry[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const buffer = new Uint8Array(await file.arrayBuffer());
+        const isGzip =
+          file.name.endsWith(".gz") || (buffer[0] === 0x1f && buffer[1] === 0x8b);
+
+        const text = isGzip
+          ? new TextDecoder().decode(pako.inflate(buffer))
+          : new TextDecoder().decode(buffer);
+
+        const entries = text.trimStart().startsWith("{")
+          ? parseVercelLogs(text)
+          : parseApacheLogs(text);
+
+        allEntries.push(...entries);
+        setProgress({ done: i + 1, total: files.length });
       }
 
-      const results = [];
-      let done = 0;
+      const result = analyze(allEntries);
+      const botCount = allEntries.filter((e) => detectBot(e.userAgent)).length;
+      const botPercent =
+        result.totalRequests > 0
+          ? Math.round((botCount / result.totalRequests) * 100)
+          : 0;
 
-      for (const batch of batches) {
-        const fd = new FormData();
-        for (const f of batch) fd.append("files", f);
+      const serialized = {
+        period: {
+          start: result.period.start.toISOString(),
+          end: result.period.end.toISOString(),
+        },
+        hosts: result.hosts,
+        totalRequests: result.totalRequests,
+        uniqueUrls: result.uniqueUrls,
+        detectedBots: result.detectedBots,
+        botPercent,
+        httpCodes: result.httpCodes,
+        bots: result.bots.map((b) => ({
+          name: b.name,
+          provider: b.provider,
+          category: b.category,
+          requests: b.requests,
+          uniqueUrls: b.uniqueUrls.size,
+          firstSeen: b.firstSeen.toISOString(),
+          lastSeen: b.lastSeen.toISOString(),
+          statusCodes: b.statusCodes,
+        })),
+        urlCategories: result.urlCategories,
+        crawledPages: result.crawledPages.map((p) => ({
+          ...p,
+          lastSeen: p.lastSeen.toISOString(),
+        })),
+        timelineData: result.timelineData,
+        entries: [...allEntries]
+          .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+          .slice(0, 1000)
+          .map((e) => ({
+            timestamp: e.timestamp.toISOString(),
+            ip: e.ip,
+            method: e.method,
+            path: e.path,
+            statusCode: e.statusCode,
+            size: e.size,
+            userAgent: e.userAgent,
+            host: e.host,
+            source: e.source,
+          })),
+      };
 
-        const res = await fetch("/api/parse-logs", { method: "POST", body: fd });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${res.status}`);
-        }
-        results.push(await res.json());
-        done += batch.length;
-        setProgress({ done, total: files.length });
-      }
-
-      const aggregated = aggregateResults(results);
-
-      // Save full aggregated result to Supabase (fire-and-forget, non-blocking)
+      // Save to Supabase (fire-and-forget)
       fetch("/api/save-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(aggregated),
+        body: JSON.stringify(serialized),
       }).catch(() => {});
 
-      onAnalyzed(aggregated);
+      onAnalyzed(serialized);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -150,7 +200,6 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
   }
 
   const totalSize = files.reduce((s, f) => s + f.size, 0);
-  const batchCount = Math.ceil(files.length / BATCH_SIZE);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-8">
@@ -248,7 +297,6 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
                 </span>
                 <span className="text-slate-500 text-xs">
                   · {(totalSize / 1024 / 1024).toFixed(1)} MB
-                  {batchCount > 1 && ` · ${batchCount} lots`}
                 </span>
               </div>
               <button
@@ -289,7 +337,7 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
         {progress && (
           <div className="mt-4">
             <div className="flex justify-between text-xs text-slate-400 mb-1">
-              <span>Lot {Math.ceil(progress.done / BATCH_SIZE)} / {batchCount}</span>
+              <span>Parsing local — fichier {progress.done} / {progress.total}</span>
               <span>{progress.done} / {progress.total} fichiers</span>
             </div>
             <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
