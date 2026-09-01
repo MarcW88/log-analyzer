@@ -400,7 +400,7 @@ export async function OPTIONS() {
 }
 
 export async function GET() {
-  return json({ status: "ok", server: "log-analyzer-mcp", version: "1.0.0" });
+  return json({ status: "ok", server: "log-analyzer-mcp", version: "2.0.0", tools: TOOLS.map(t => t.name) });
 }
 
 export async function POST(req: NextRequest) {
@@ -433,7 +433,7 @@ export async function POST(req: NextRequest) {
     return rpc(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "log-analyzer", version: "1.0.0" },
+      serverInfo: { name: "log-analyzer", version: "2.0.0" },
     });
   }
 
