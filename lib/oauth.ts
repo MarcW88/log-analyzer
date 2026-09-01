@@ -29,5 +29,7 @@ export function sha256Base64url(input: string): string {
 }
 
 export function isValidAccessToken(token: string): boolean {
+  const apiKey = process.env.MCP_API_KEY;
+  if (apiKey && token === apiKey) return true;
   return verifyPayload(token) !== null;
 }
