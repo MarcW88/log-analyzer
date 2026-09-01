@@ -46,6 +46,18 @@ export interface CachedAnalysis {
 
 let _memCache: CachedAnalysis | null = null;
 
+export async function saveAnalysisToSupabase(data: CachedAnalysis): Promise<void> {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return;
+  try {
+    const { supabaseAdmin } = await import("./supabase");
+    await supabaseAdmin
+      .from("log_analyses")
+      .upsert({ id: "latest", data, saved_at: data.savedAt });
+  } catch (err) {
+    console.warn("[cache] Supabase save failed:", err);
+  }
+}
+
 export function saveAnalysis(data: CachedAnalysis): void {
   _memCache = data;
   try {

@@ -4,7 +4,7 @@ import { parseApacheLogs } from "@/lib/parseApacheLogs";
 import { parseVercelLogs } from "@/lib/parseVercelLogs";
 import { analyze } from "@/lib/analyze";
 import { detectBot } from "@/lib/botDetection";
-import { saveAnalysis } from "@/lib/cache";
+import { saveAnalysis, saveAnalysisToSupabase, type CachedAnalysis } from "@/lib/cache";
 import { LogEntry } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       ? Math.round((botCount / result.totalRequests) * 100)
       : 0;
 
-    saveAnalysis({
+    const cachedData: CachedAnalysis = {
       savedAt: new Date().toISOString(),
       period: {
         start: result.period.start.toISOString(),
@@ -93,7 +93,10 @@ export async function POST(req: NextRequest) {
         lastSeen: p.lastSeen.toISOString(),
       })),
       timelineData: result.timelineData,
-    });
+    };
+
+    saveAnalysis(cachedData);
+    await saveAnalysisToSupabase(cachedData);
 
     // Serialize the result (Sets → arrays, Dates → ISO strings)
     return NextResponse.json({
