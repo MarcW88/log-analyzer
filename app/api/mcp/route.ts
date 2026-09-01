@@ -5,6 +5,7 @@ import { analyze } from "@/lib/analyze";
 import { detectBot } from "@/lib/botDetection";
 import { isValidAccessToken } from "@/lib/oauth";
 import { loadAnalysis } from "@/lib/cache";
+import { supabaseAdmin } from "@/lib/supabase";
 import type { LogEntry } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -148,16 +149,33 @@ const TOOLS = [
   },
 ];
 
+// ── Supabase loader (primary) with file-cache fallback ────────────
+
+async function loadLatestAnalysis() {
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data } = await supabaseAdmin
+        .from("log_analyses")
+        .select("data")
+        .eq("id", "latest")
+        .single();
+      if (data?.data) return data.data as ReturnType<typeof loadAnalysis>;
+    } catch {
+      // fall through to file cache
+    }
+  }
+  return loadAnalysis();
+}
+
 // ── Tool handlers ──────────────────────────────────────────────────
 
-function handleGetLastAnalysis(): string {
-  const c = loadAnalysis();
+async function handleGetLastAnalysis(): Promise<string> {
+  const c = await loadLatestAnalysis();
   if (!c) {
     return [
-      "❌ **No cached analysis found.**",
+      "❌ **No analysis found in Supabase.**",
       "",
-      "Upload a log file via the Log Analyzer UI first, then call this tool again.",
-      "Alternatively, use `analyze_logs` and pass the raw log content directly.",
+      "Upload log files via the Log Analyzer UI first, then call this tool again.",
     ].join("\n");
   }
 
@@ -208,9 +226,9 @@ function handleGetLastAnalysis(): string {
   ].join("\n");
 }
 
-function handleGetTopBots(args: Record<string, unknown>): string {
-  const c = loadAnalysis();
-  if (!c) return "❌ No cached analysis found. Upload logs via the UI first.";
+async function handleGetTopBots(args: Record<string, unknown>): Promise<string> {
+  const c = await loadLatestAnalysis();
+  if (!c) return "❌ No analysis found in Supabase. Upload logs via the UI first.";
 
   const category = typeof args.category === "string" ? args.category.toLowerCase() : null;
   const limit = Math.min(typeof args.limit === "number" ? args.limit : 15, 50);
@@ -230,9 +248,9 @@ function handleGetTopBots(args: Record<string, unknown>): string {
   return header + rows.join("\n");
 }
 
-function handleGetTopPages(args: Record<string, unknown>): string {
-  const c = loadAnalysis();
-  if (!c) return "❌ No cached analysis found. Upload logs via the UI first.";
+async function handleGetTopPages(args: Record<string, unknown>): Promise<string> {
+  const c = await loadLatestAnalysis();
+  if (!c) return "❌ No analysis found in Supabase. Upload logs via the UI first.";
 
   const pathFilter = typeof args.path_contains === "string" ? args.path_contains.toLowerCase() : null;
   const minBot = typeof args.min_bot_percent === "number" ? args.min_bot_percent : 0;
@@ -433,12 +451,12 @@ export async function POST(req: NextRequest) {
 
     try {
       let result = "";
-      if (name === "analyze_logs")         result = handleAnalyzeLogs(args);
-      else if (name === "detect_bot")       result = handleDetectBot(args);
-      else if (name === "filter_entries")   result = handleFilterEntries(args);
-      else if (name === "get_last_analysis") result = handleGetLastAnalysis();
-      else if (name === "get_top_bots")     result = handleGetTopBots(args);
-      else if (name === "get_top_pages")    result = handleGetTopPages(args);
+      if (name === "analyze_logs")          result = handleAnalyzeLogs(args);
+      else if (name === "detect_bot")        result = handleDetectBot(args);
+      else if (name === "filter_entries")    result = handleFilterEntries(args);
+      else if (name === "get_last_analysis") result = await handleGetLastAnalysis();
+      else if (name === "get_top_bots")      result = await handleGetTopBots(args);
+      else if (name === "get_top_pages")     result = await handleGetTopPages(args);
       else return rpc(id, { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true });
       return rpc(id, { content: [{ type: "text", text: result }] });
     } catch (err) {
