@@ -4,7 +4,7 @@ import { parseApacheLogs } from "@/lib/parseApacheLogs";
 import { parseVercelLogs } from "@/lib/parseVercelLogs";
 import { analyze } from "@/lib/analyze";
 import { detectBot } from "@/lib/botDetection";
-import { saveAnalysis, saveAnalysisToSupabase, type CachedAnalysis } from "@/lib/cache";
+import { saveAnalysis, type CachedAnalysis } from "@/lib/cache";
 import { LogEntry } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -96,7 +96,6 @@ export async function POST(req: NextRequest) {
     };
 
     saveAnalysis(cachedData);
-    await saveAnalysisToSupabase(cachedData);
 
     // Serialize the result (Sets → arrays, Dates → ISO strings)
     return NextResponse.json({

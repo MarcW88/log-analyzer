@@ -9,7 +9,7 @@ interface FileUploaderProps {
   onAnalyzed: (data: unknown) => void;
 }
 
-const BATCH_SIZE = 30;
+const BATCH_SIZE = 3;
 const ALLOWED_EXT = [".gz", ".log", ".txt"];
 
 function isAllowed(name: string) {
@@ -131,7 +131,16 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
         setProgress({ done, total: files.length });
       }
 
-      onAnalyzed(aggregateResults(results));
+      const aggregated = aggregateResults(results);
+
+      // Save full aggregated result to Supabase (fire-and-forget, non-blocking)
+      fetch("/api/save-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aggregated),
+      }).catch(() => {});
+
+      onAnalyzed(aggregated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
