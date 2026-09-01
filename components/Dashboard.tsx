@@ -17,6 +17,7 @@ import {
   Link2,
   Activity,
   RefreshCw,
+  ExternalLink,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -259,13 +260,24 @@ export default function Dashboard({ data, onReset }: DashboardProps) {
               </>
             )}
           </div>
-          <button
-            onClick={onReset}
-            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
-          >
-            <RefreshCw size={13} />
-            New import
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href="/report"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <ExternalLink size={13} />
+              Rapport ChatGPT
+            </a>
+            <button
+              onClick={onReset}
+              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <RefreshCw size={13} />
+              New import
+            </button>
+          </div>
         </div>
 
         {/* Row 2: section anchor links */}
