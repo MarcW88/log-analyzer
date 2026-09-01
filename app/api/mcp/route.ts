@@ -147,6 +147,12 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "get_full_report",
+    description:
+      "Return a complete markdown report from the last log analysis stored in Supabase: overview stats, SEO bots table, AI bots table, HTTP codes, top URL categories, most crawled pages, and daily timeline. No parameters needed.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 // ── Supabase loader (primary) with file-cache fallback ────────────
@@ -270,6 +276,90 @@ async function handleGetTopPages(args: Record<string, unknown>): Promise<string>
     `\n   Last seen: ${new Date(p.lastSeen).toLocaleDateString("fr-FR")}`
   );
   return header + rows.join("\n");
+}
+
+async function handleGetFullReport(): Promise<string> {
+  const c = await loadLatestAnalysis();
+  if (!c) return "❌ No analysis found in Supabase. Upload logs via the UI first.";
+
+  const saved = new Date(c.savedAt).toLocaleString("fr-FR");
+  const period = `${new Date(c.period.start).toLocaleDateString("fr-FR")} → ${new Date(c.period.end).toLocaleDateString("fr-FR")}`;
+
+  const mdTable = (headers: string[], rows: string[][]): string => {
+    const sep = headers.map(() => "---").join(" | ");
+    return [
+      `| ${headers.join(" | ")} |`,
+      `| ${sep} |`,
+      ...rows.map(r => `| ${r.join(" | ")} |`),
+    ].join("\n");
+  };
+
+  const seo  = c.bots.filter((b) => b.category.toLowerCase().includes("search"));
+  const ai   = c.bots.filter((b) => b.category.toLowerCase().includes("ai"));
+  const other = c.bots.filter((b) => !b.category.toLowerCase().includes("search") && !b.category.toLowerCase().includes("ai"));
+
+  const botTable = (bots: typeof c.bots) => mdTable(
+    ["Bot", "Provider", "Requêtes", "URLs uniques", "Première vue", "Dernière vue"],
+    bots.map(b => [b.name, b.provider, b.requests.toLocaleString(), String(b.uniqueUrls),
+      new Date(b.firstSeen).toLocaleDateString("fr-FR"),
+      new Date(b.lastSeen).toLocaleDateString("fr-FR")])
+  );
+
+  const httpRows = Object.entries(c.httpCodes)
+    .sort(([,a],[,b]) => (b as number) - (a as number))
+    .map(([code, count]) => [code, (count as number).toLocaleString()]);
+
+  const timeline = (c as unknown as Record<string, unknown>).timelineData as Array<Record<string,unknown>> | undefined ?? [];
+  const timelineTable = timeline.length ? mdTable(
+    ["Date", "Utilisateurs", "Bots SEO", "Bots IA", "Autres", "Total"],
+    timeline.map(t => [
+      String(t.date), String(t.users), String(t.searchEngines),
+      String(t.aiBots), String(t.others), String(t.total)
+    ])
+  ) : "_Aucune donnée timeline_";
+
+  return [
+    `## 📊 Rapport Log Analyzer _(${saved})_`,
+    `**Période :** ${period}  |  **Hosts :** ${c.hosts.join(", ") || "—"}`,
+    ``,
+    `### Vue d'ensemble`,
+    `| Métrique | Valeur |`,
+    `| --- | --- |`,
+    `| Requêtes totales | ${c.totalRequests.toLocaleString()} |`,
+    `| URLs uniques | ${c.uniqueUrls.toLocaleString()} |`,
+    `| Bots distincts | ${c.detectedBots} |`,
+    `| Trafic bots | ${c.botPercent}% |`,
+    ``,
+    `### 🔎 Bots SEO (${seo.length})`,
+    seo.length ? botTable(seo) : "_Aucun_",
+    ``,
+    `### 🧠 Bots IA (${ai.length})`,
+    ai.length ? botTable(ai) : "_Aucun_",
+    ``,
+    `### 📦 Autres bots (${other.length})`,
+    other.length ? botTable(other) : "_Aucun_",
+    ``,
+    `### 🌐 Codes HTTP`,
+    mdTable(["Code", "Occurrences"], httpRows),
+    ``,
+    `### 📁 Catégories d'URLs (top 20)`,
+    mdTable(
+      ["Segment", "Requêtes", "URLs uniques", "Req/jour"],
+      c.urlCategories.slice(0,20).map(u => [u.path, u.requests.toLocaleString(), String(u.uniqueUrls), String(u.reqPerDay)])
+    ),
+    ``,
+    `### 🔍 Pages les plus crawlées (top 30)`,
+    mdTable(
+      ["Page", "Requêtes", "% bots", "Dernière vue"],
+      c.crawledPages.slice(0,30).map(p => [
+        `\`${p.path}\``, String(p.requests), `${p.botPercent}%`,
+        new Date(p.lastSeen).toLocaleDateString("fr-FR")
+      ])
+    ),
+    ``,
+    `### 📅 Timeline par jour`,
+    timelineTable,
+  ].join("\n");
 }
 
 function handleDetectBot(args: Record<string, unknown>): string {
@@ -457,6 +547,7 @@ export async function POST(req: NextRequest) {
       else if (name === "get_last_analysis") result = await handleGetLastAnalysis();
       else if (name === "get_top_bots")      result = await handleGetTopBots(args);
       else if (name === "get_top_pages")     result = await handleGetTopPages(args);
+      else if (name === "get_full_report")     result = await handleGetFullReport();
       else return rpc(id, { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true });
       return rpc(id, { content: [{ type: "text", text: result }] });
     } catch (err) {
