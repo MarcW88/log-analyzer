@@ -113,7 +113,9 @@ export function aggregateResults(results: ApiResult[]): ApiResult {
       }
     }
 
-    allEntries.push(...r.entries);
+    for (const entry of r.entries) {
+      allEntries.push(entry);
+    }
   }
 
   const daysDiff = Math.max(
