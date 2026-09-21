@@ -51,7 +51,9 @@ export async function POST(req: NextRequest) {
         ? parseVercelLogs(text)
         : parseApacheLogs(text);
 
-      allEntries.push(...entries);
+      for (const entry of entries) {
+        allEntries.push(entry);
+      }
     }
 
     if (!allEntries.length) {
