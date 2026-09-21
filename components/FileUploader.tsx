@@ -129,7 +129,9 @@ export default function FileUploader({ onAnalyzed }: FileUploaderProps) {
           ? parseVercelLogs(text)
           : parseApacheLogs(text);
 
-        allEntries.push(...entries);
+        for (const entry of entries) {
+          allEntries.push(entry);
+        }
         setProgress({ done: i + 1, total: files.length });
       }
 
